@@ -109,6 +109,19 @@ func TestAddGetDeleteWhenInvalidStatus(t *testing.T) {
 	assert.Equal(t, parcel, afterDelete)
 }
 
+// TestDeleteWhenParcelNotExists ensures Delete returns
+// sql.ErrNoRows for a missing parcel.
+func TestDeleteWhenParcelNotExists(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store := NewParcelStore(db)
+
+	// delete
+	err := store.Delete(randRange.Intn(10_000_000))
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
 // TestAddWhenUnrecognisedNewStatus ensures that adding a parcel
 // with an unrecognised status fails.
 func TestAddWhenUnrecognisedNewStatus(t *testing.T) {
@@ -182,6 +195,19 @@ func TestSetAddressWhenInvalidStatus(t *testing.T) {
 	storedParcel, err := store.Get(id)
 	require.NoError(t, err)
 	require.Equal(t, parcel.Address, storedParcel.Address)
+}
+
+// TestSetAddressWhenParcelNotExists ensures SetAddress returns
+// sql.ErrNoRows for a missing parcel.
+func TestSetAddressWhenParcelNotExists(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store := NewParcelStore(db)
+
+	// set address
+	err := store.SetAddress(randRange.Intn(10_000_000), "does not matter")
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 // TestSetStatusValidTransition verifies that a valid status

@@ -6,19 +6,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+const testSchema = `CREATE TABLE IF NOT EXISTS "parcel" (
+    number INTEGER PRIMARY KEY AUTOINCREMENT,
+    client INTEGER NOT NULL,
+    status VARCHAR(128) NOT NULL,
+    address VARCHAR(512) NOT NULL,
+    created_at VARCHAR(64) NOT NULL
+);
+CREATE INDEX parcel_client ON parcel(client);
+CREATE INDEX parcel_created_at ON parcel(created_at);
+`
+
 var (
-	// randSource источник псевдо случайных чисел.
-	// Для повышения уникальности в качестве seed
-	// используется текущее время в unix формате (в виде числа)
+	// randSource is a pseudo-random number generator.
+	// It is seeded with the current Unix timestamp for higher uniqueness.
 	randSource = rand.NewSource(time.Now().UnixNano())
-	// randRange использует randSource для генерации случайных чисел
+	// randRange uses randSource to generate random numbers.
 	randRange = rand.New(randSource)
 )
 
-// getTestParcel возвращает тестовую посылку
+// getTestParcel returns a sample test parcel.
 func getTestParcel() Parcel {
 	return Parcel{
 		Client:    1000,
@@ -28,60 +39,233 @@ func getTestParcel() Parcel {
 	}
 }
 
-// TestAddGetDelete проверяет добавление, получение и удаление посылки
-func TestAddGetDelete(t *testing.T) {
+// getTestDB creates and returns an in-memory SQLite database for testing.
+// Marked as helper (t.Helper()), so errors are reported at the caller level.
+func getTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+
+	_, err = db.Exec(testSchema)
+	require.NoError(t, err)
+	return db
+}
+
+// TestAddGetDeleteWhenValidStatus verifies adding, retrieving and deleting
+// a parcel with a valid status.
+func TestAddGetDeleteWhenValidStatus(t *testing.T) {
 	// prepare
-	db, err := // настройте подключение к БД
-	store := NewParcelStore(db)
-	parcel := getTestParcel()
+	db := getTestDB(t)
+	defer db.Close()
+	store, parcel := NewParcelStore(db), getTestParcel()
+	parcel.Status = ParcelStatusRegistered
 
 	// add
-	// добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
+	id, err := store.Add(parcel)
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+	parcel.Number = id
 
 	// get
-	// получите только что добавленную посылку, убедитесь в отсутствии ошибки
-	// проверьте, что значения всех полей в полученном объекте совпадают со значениями полей в переменной parcel
+	storedParcel, err := store.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, parcel, storedParcel)
 
 	// delete
-	// удалите добавленную посылку, убедитесь в отсутствии ошибки
-	// проверьте, что посылку больше нельзя получить из БД
+	err = store.Delete(id)
+	require.NoError(t, err)
+
+	afterDelete, err := store.Get(id)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+	require.Empty(t, afterDelete)
 }
 
-// TestSetAddress проверяет обновление адреса
-func TestSetAddress(t *testing.T) {
+// TestAddGetDeleteWhenInvalidStatus verifies behaviour when attempting to
+// delete a parcel with an invalid status.
+func TestAddGetDeleteWhenInvalidStatus(t *testing.T) {
 	// prepare
-	db, err := // настройте подключение к БД
+	db := getTestDB(t)
+	defer db.Close()
+	store, parcel := NewParcelStore(db), getTestParcel()
+	parcel.Status = ParcelStatusDelivered
 
 	// add
-	// добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
+	id, err := store.Add(parcel)
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+	parcel.Number = id
+
+	// get
+	storedParcel, err := store.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, parcel, storedParcel)
+
+	// delete
+	err = store.Delete(id)
+	require.ErrorIs(t, err, ErrRequireRegistered)
+
+	afterDelete, err := store.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, parcel, afterDelete)
+}
+
+// TestDeleteWhenParcelNotExists ensures Delete returns
+// sql.ErrNoRows for a missing parcel.
+func TestDeleteWhenParcelNotExists(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store := NewParcelStore(db)
+
+	// delete
+	err := store.Delete(randRange.Intn(10_000_000))
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+// TestAddWhenUnrecognisedNewStatus ensures that adding a parcel
+// with an unrecognised status fails.
+func TestAddWhenUnrecognisedNewStatus(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store, parcel := NewParcelStore(db), getTestParcel()
+	parcel.Status = "unrecognised"
+
+	// add
+	id, err := store.Add(parcel)
+	require.ErrorIs(t, err, ErrNewStatusUnrecognised)
+	require.Empty(t, id)
+
+	// check
+	var actualCount int = -1
+
+	query := "SELECT COUNT(*) FROM parcel"
+	row := store.db.QueryRow(query)
+	err = row.Scan(&actualCount)
+
+	require.NoError(t, err)
+	require.Zero(t, actualCount)
+}
+
+// TestSetAddressWhenValidStatus verifies updating a parcel address
+// when the status is valid.
+func TestSetAddressWhenValidStatus(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store, parcel := NewParcelStore(db), getTestParcel()
+	parcel.Status = ParcelStatusRegistered
+
+	// add
+	id, err := store.Add(parcel)
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
 
 	// set address
-	// обновите адрес, убедитесь в отсутствии ошибки
 	newAddress := "new test address"
+	err = store.SetAddress(id, newAddress)
+	require.NoError(t, err)
 
 	// check
-	// получите добавленную посылку и убедитесь, что адрес обновился
+	storedParcel, err := store.Get(id)
+	require.NoError(t, err)
+	require.Equal(t, newAddress, storedParcel.Address)
 }
 
-// TestSetStatus проверяет обновление статуса
-func TestSetStatus(t *testing.T) {
+// TestSetAddressWhenInvalidStatus ensures that updating the address fails
+// if the parcel is not in `registered` status.
+func TestSetAddressWhenInvalidStatus(t *testing.T) {
 	// prepare
-	db, err := // настройте подключение к БД
+	db := getTestDB(t)
+	defer db.Close()
+	store, parcel := NewParcelStore(db), getTestParcel()
+	parcel.Status = ParcelStatusSent
 
 	// add
-	// добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
+	id, err := store.Add(parcel)
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
 
-	// set status
-	// обновите статус, убедитесь в отсутствии ошибки
+	// set address
+	newAddress := "new test address"
+	err = store.SetAddress(id, newAddress)
+	require.ErrorIs(t, err, ErrRequireRegistered)
 
 	// check
-	// получите добавленную посылку и убедитесь, что статус обновился
+	storedParcel, err := store.Get(id)
+	require.NoError(t, err)
+	require.Equal(t, parcel.Address, storedParcel.Address)
 }
 
-// TestGetByClient проверяет получение посылок по идентификатору клиента
+// TestSetAddressWhenParcelNotExists ensures SetAddress returns
+// sql.ErrNoRows for a missing parcel.
+func TestSetAddressWhenParcelNotExists(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store := NewParcelStore(db)
+
+	// set address
+	err := store.SetAddress(randRange.Intn(10_000_000), "does not matter")
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+// TestSetStatusValidTransition verifies that a valid status
+// transition is applied successfully.
+func TestSetStatusValidTransition(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store, parcel := NewParcelStore(db), getTestParcel()
+	parcel.Status = ParcelStatusRegistered
+
+	// add
+	id, err := store.Add(parcel)
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+
+	// set status
+	newStatus := ParcelStatusSent
+	err = store.SetStatus(id, newStatus)
+	require.NoError(t, err)
+
+	// check
+	storedParcel, err := store.Get(id)
+	require.NoError(t, err)
+	require.Equal(t, newStatus, storedParcel.Status)
+}
+
+// TestSetStatusWhenUnrecognisedNewStatus ensures that setting
+// an unrecognised status fails.
+func TestSetStatusWhenUnrecognisedNewStatus(t *testing.T) {
+	// prepare
+	db := getTestDB(t)
+	defer db.Close()
+	store, parcel := NewParcelStore(db), getTestParcel()
+	parcel.Status = ParcelStatusRegistered
+
+	// add
+	id, err := store.Add(parcel)
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+
+	// set status
+	unrecognisedStatus := "unrecognised"
+	err = store.SetStatus(id, unrecognisedStatus)
+	require.ErrorIs(t, err, ErrNewStatusUnrecognised)
+
+	// check
+	storedParcel, err := store.Get(id)
+	require.NoError(t, err)
+	require.Equal(t, parcel.Status, storedParcel.Status)
+}
+
+// TestGetByClient verifies retrieving parcels by client ID.
 func TestGetByClient(t *testing.T) {
 	// prepare
-	db, err := // настройте подключение к БД
+	db := getTestDB(t)
+	defer db.Close()
+	store := NewParcelStore(db)
 
 	parcels := []Parcel{
 		getTestParcel(),
@@ -90,7 +274,7 @@ func TestGetByClient(t *testing.T) {
 	}
 	parcelMap := map[int]Parcel{}
 
-	// задаём всем посылкам один и тот же идентификатор клиента
+	// assign the same client ID to all parcels
 	client := randRange.Intn(10_000_000)
 	parcels[0].Client = client
 	parcels[1].Client = client
@@ -98,24 +282,26 @@ func TestGetByClient(t *testing.T) {
 
 	// add
 	for i := 0; i < len(parcels); i++ {
-		id, err := // добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
+		id, err := store.Add(parcels[i])
+		require.NoError(t, err)
+		require.NotEmpty(t, id)
 
-		// обновляем идентификатор добавленной у посылки
+		// update parcel ID
 		parcels[i].Number = id
 
-		// сохраняем добавленную посылку в структуру map, чтобы её можно было легко достать по идентификатору посылки
+		// save added parcel into a map for quick lookup
 		parcelMap[id] = parcels[i]
 	}
 
 	// get by client
-	storedParcels, err := // получите список посылок по идентификатору клиента, сохранённого в переменной client
-	// убедитесь в отсутствии ошибки
-	// убедитесь, что количество полученных посылок совпадает с количеством добавленных
+	storedParcels, err := store.GetByClient(client)
+	require.NoError(t, err)
+	require.Len(t, storedParcels, len(parcels))
 
 	// check
-	for _, parcel := range storedParcels {
-		// в parcelMap лежат добавленные посылки, ключ - идентификатор посылки, значение - сама посылка
-		// убедитесь, что все посылки из storedParcels есть в parcelMap
-		// убедитесь, что значения полей полученных посылок заполнены верно
+	for _, storedParcel := range storedParcels {
+		localParcel, ok := parcelMap[storedParcel.Number]
+		assert.True(t, ok)
+		assert.Equal(t, localParcel, storedParcel)
 	}
 }

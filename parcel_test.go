@@ -235,31 +235,6 @@ func TestSetStatusValidTransition(t *testing.T) {
 	require.Equal(t, newStatus, storedParcel.Status)
 }
 
-// TestSetStatusInvalidTransition checks that an invalid status transition
-// returns an error and does not update the parcel.
-func TestSetStatusInvalidTransition(t *testing.T) {
-	// prepare
-	db := getTestDB(t)
-	defer db.Close()
-	store, parcel := NewParcelStore(db), getTestParcel()
-	parcel.Status = ParcelStatusRegistered
-
-	// add
-	id, err := store.Add(parcel)
-	require.NoError(t, err)
-	require.NotEmpty(t, id)
-
-	// set status
-	invalidStatus := ParcelStatusDelivered
-	err = store.SetStatus(id, invalidStatus)
-	require.ErrorIs(t, err, ErrInvalidStatusTransition)
-
-	// check
-	storedParcel, err := store.Get(id)
-	require.NoError(t, err)
-	require.Equal(t, parcel.Status, storedParcel.Status)
-}
-
 // TestSetStatusWhenUnrecognisedNewStatus ensures that setting
 // an unrecognised status fails.
 func TestSetStatusWhenUnrecognisedNewStatus(t *testing.T) {
@@ -281,37 +256,6 @@ func TestSetStatusWhenUnrecognisedNewStatus(t *testing.T) {
 
 	// check
 	storedParcel, err := store.Get(id)
-	require.NoError(t, err)
-	require.Equal(t, parcel.Status, storedParcel.Status)
-}
-
-// TestSetStatusWhenUnrecognisedStoredStatus ensures that updating a parcel
-// with an unrecognised stored status fails.
-func TestSetStatusWhenUnrecognisedStoredStatus(t *testing.T) {
-	// prepare
-	db := getTestDB(t)
-	defer db.Close()
-	store, parcel := NewParcelStore(db), getTestParcel()
-	parcel.Status = "unrecognised"
-
-	// add
-	query := `INSERT INTO parcel (client, status, address, created_at)
-VALUES (:client, :status, :address, :created_at)`
-	res, err := store.db.Exec(query, sql.Named("client", parcel.Client), sql.Named("status", parcel.Status),
-		sql.Named("address", parcel.Address), sql.Named("created_at", parcel.CreatedAt))
-	require.NoError(t, err)
-
-	id, err := res.LastInsertId()
-	require.NoError(t, err)
-	require.NotEmpty(t, id)
-
-	// set status
-	newStatus := ParcelStatusRegistered
-	err = store.SetStatus(int(id), newStatus)
-	require.ErrorIs(t, err, ErrStoredStatusUnrecognised)
-
-	// check
-	storedParcel, err := store.Get(int(id))
 	require.NoError(t, err)
 	require.Equal(t, parcel.Status, storedParcel.Status)
 }

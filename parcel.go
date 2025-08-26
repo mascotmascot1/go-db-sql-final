@@ -12,10 +12,8 @@ var (
 	ErrNoDBConnection = errors.New("no database connection")
 
 	// Business logic errors
-	ErrNewStatusUnrecognised    = errors.New("unrecognised new status")
-	ErrStoredStatusUnrecognised = errors.New("unrecognised stored status")
-	ErrInvalidStatusTransition  = errors.New("invalid status transition")
-	ErrRequireRegistered        = errors.New("requires registered status")
+	ErrNewStatusUnrecognised = errors.New("unrecognised new status")
+	ErrRequireRegistered     = errors.New("requires registered status")
 )
 
 // ParcelStore wraps a *sql.DB handle and provides higher–level
@@ -125,56 +123,26 @@ func (s ParcelStore) GetByClient(client int) ([]Parcel, error) {
 
 // SetStatus updates the status of a parcel identified by its number.
 //
-// The transition is only permitted if the new status represents the next
-// valid step in the delivery lifecycle:
-//
-//	registered → sent → delivered
-//
 // Behaviour:
 //   - If the store has not been initialised with a database connection,
 //     ErrNoDBConnection is returned.
-//   - If the supplied new status is not recognised, ErrNewStatusUnrecognised
+//   - If the supplied status is not recognised, ErrNewStatusUnrecognised
 //     is returned (wrapped with context).
-//   - If the stored status in the database is not recognised,
-//     ErrStoredStatusUnrecognised is returned (wrapped).
-//   - If the attempted change does not represent a valid forward transition
-//     (e.g. delivered → sent, or skipping steps),
-//     ErrInvalidStatusTransition is returned (wrapped).
 //   - On any database execution failure, the underlying error is wrapped
 //     with context.
-//
-// Records with unrecognised statuses are considered invalid and should be
-// corrected or removed manually before retrying.
 func (s ParcelStore) SetStatus(number int, status string) error {
 	if s.db == nil {
 		return ErrNoDBConnection
 	}
 
-	storedStatus, err := s.getStatus(number)
-	if err != nil {
-		return err
-	}
-	var statusOrder = map[string]int{
-		ParcelStatusRegistered: 0,
-		ParcelStatusSent:       1,
-		ParcelStatusDelivered:  2,
-	}
-	statusRank, ok := statusOrder[status]
-	if !ok {
+	if status != ParcelStatusDelivered && status != ParcelStatusRegistered && status != ParcelStatusSent {
 		return fmt.Errorf("failed to update status: %w %q for parcel with number %d", ErrNewStatusUnrecognised, status, number)
-	}
-	storedStatusRank, ok := statusOrder[storedStatus]
-	if !ok {
-		return fmt.Errorf("failed to update status: %w %q for parcel with number %d", ErrStoredStatusUnrecognised, storedStatus, number)
-	}
-	if statusRank-storedStatusRank != 1 {
-		return fmt.Errorf("failed to update status: %w %q → %q for parcel with number %d", ErrInvalidStatusTransition, storedStatus, status, number)
 	}
 
 	query := "UPDATE parcel SET status = :status WHERE number = :number"
-	_, err = s.db.Exec(query, sql.Named("status", status), sql.Named("number", number))
+	_, err := s.db.Exec(query, sql.Named("status", status), sql.Named("number", number))
 	if err != nil {
-		return fmt.Errorf("failed to update status %q to %q for parcel with number %d: %w", storedStatus, status, number, err)
+		return fmt.Errorf("failed to update status to %q for parcel with number %d: %w", status, number, err)
 	}
 	return nil
 }
